@@ -1,11 +1,11 @@
-import { StyleSheet, View, Text } from 'react-native';
+import * as Haptics from "expo-haptics";
+import { Button, StyleSheet, View, Text } from "react-native";
 import { Stack } from "expo-router";
-
-
+// import { useAnnounceOnFocus } from "./hooks/tts";
 
 export default function ProfileScreen() {
   const TITLE = "Profile";
-  //useAnnounceOnFocus(TITLE);
+  // useAnnounceOnFocus(TITLE);
 
   return (
     <>
@@ -16,7 +16,13 @@ export default function ProfileScreen() {
         <Text accessibilityRole="header" style={styles.title}>
           {TITLE}
         </Text>
-        <Text  style={styles.text}>…your profile content…</Text>
+        <Text style={styles.text}>…your profile content…</Text>
+        <Button
+          title="Teacher Dashboard"
+          onPress={() =>
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+          }
+        />
       </View>
     </>
   );
