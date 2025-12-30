@@ -1,6 +1,4 @@
-import { StyleSheet, View, Text, Button } from 'react-native';
-import * as Haptics from 'expo-haptics';
-//import { useAnnounceOnFocus } from "./hooks/tts";
+import { StyleSheet, View, Text } from 'react-native';
 import { Stack } from "expo-router";
 
 
