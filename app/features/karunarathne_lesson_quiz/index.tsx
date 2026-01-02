@@ -7,6 +7,11 @@ import {
   ScrollView,
   SafeAreaView,
 } from "react-native";
+import {
+  Gesture,
+  GestureDetector,
+  Directions,
+} from "react-native-gesture-handler";
 import { LessonPlayerController } from "./lesson_player/controller/lessonPlayerController";
 import { QuizController } from "./quiz_engine/controller/quizController";
 
@@ -20,7 +25,8 @@ export default function KarunarathneLessonQuizScreen() {
   const [currentSessionLabel, setCurrentSessionLabel] =
     useState<string | null>(null);
 
-  // These all use your existing QuizController API: startSession(...)
+  // --- QUIZ SESSION HANDLERS ---
+
   const handlePractice = () => {
     setMode("quiz");
     setCurrentSessionLabel("Practice session – 10 questions, Grade 10");
@@ -58,181 +64,252 @@ export default function KarunarathneLessonQuizScreen() {
     quiz.startSession({ type: "weak_area", limit: 10 });
   };
 
+  // --- GESTURES ---
+
+  // Double tap: repeat current content
+  const doubleTap = Gesture.Tap()
+    .numberOfTaps(2)
+    .onEnd(() => {
+      if (mode === "lesson") {
+        lesson.repeat();
+      } else {
+        quiz.repeatQuestion();
+      }
+    });
+
+  // Long press: hint (quiz mode)
+  const longPress = Gesture.LongPress()
+    .minDuration(400)
+    .onEnd(() => {
+      if (mode === "quiz") {
+        quiz.speakHint();
+      }
+    });
+
+  // Swipe left/right: lesson navigation OR quiz answer D/B
+  const swipeLeft = Gesture.Fling()
+    .direction(Directions.LEFT)
+    .onEnd(() => {
+      if (mode === "lesson") {
+        lesson.prev();
+      } else {
+        // Quiz: answer D
+        quiz.answer(3);
+      }
+    });
+
+  const swipeRight = Gesture.Fling()
+    .direction(Directions.RIGHT)
+    .onEnd(() => {
+      if (mode === "lesson") {
+        lesson.next();
+      } else {
+        // Quiz: answer B
+        quiz.answer(1);
+      }
+    });
+
+  // Swipe up/down: quiz answers A/C
+  const swipeUp = Gesture.Fling()
+    .direction(Directions.UP)
+    .onEnd(() => {
+      if (mode === "quiz") {
+        // Quiz: answer A
+        quiz.answer(0);
+      }
+    });
+
+  const swipeDown = Gesture.Fling()
+    .direction(Directions.DOWN)
+    .onEnd(() => {
+      if (mode === "quiz") {
+        // Quiz: answer C
+        quiz.answer(2);
+      }
+    });
+
+  const gestures = Gesture.Simultaneous(
+    doubleTap,
+    longPress,
+    swipeLeft,
+    swipeRight,
+    swipeUp,
+    swipeDown
+  );
+
   return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.root}>
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.appTitle}>VisionBridge Mobile</Text>
-          <Text style={styles.appSubtitle}>
-            Lesson Player & Audio Quiz Engine
-          </Text>
+    <GestureDetector gesture={gestures}>
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.root}>
+          {/* Header */}
+          <View style={styles.header}>
+            <Text style={styles.appTitle}>VisionBridge Mobile</Text>
+            <Text style={styles.appSubtitle}>
+              Lesson Player & Audio Quiz Engine
+            </Text>
 
-          <View style={styles.modePill}>
-            <Pressable
-              style={[
-                styles.modeChip,
-                mode === "lesson" && styles.modeChipActive,
-              ]}
-              onPress={() => setMode("lesson")}
-            >
-              <Text
+            <View style={styles.modePill}>
+              <Pressable
                 style={[
-                  styles.modeChipText,
-                  mode === "lesson" && styles.modeChipTextActive,
+                  styles.modeChip,
+                  mode === "lesson" && styles.modeChipActive,
                 ]}
+                onPress={() => setMode("lesson")}
               >
-                Lesson Mode
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[
-                styles.modeChip,
-                mode === "quiz" && styles.modeChipActive,
-              ]}
-              onPress={() => setMode("quiz")}
-            >
-              <Text
+                <Text
+                  style={[
+                    styles.modeChipText,
+                    mode === "lesson" && styles.modeChipTextActive,
+                  ]}
+                >
+                  Lesson Mode
+                </Text>
+              </Pressable>
+              <Pressable
                 style={[
-                  styles.modeChipText,
-                  mode === "quiz" && styles.modeChipTextActive,
+                  styles.modeChip,
+                  mode === "quiz" && styles.modeChipActive,
                 ]}
+                onPress={() => setMode("quiz")}
               >
-                Quiz Mode
+                <Text
+                  style={[
+                    styles.modeChipText,
+                    mode === "quiz" && styles.modeChipTextActive,
+                  ]}
+                >
+                  Quiz Mode
+                </Text>
+              </Pressable>
+            </View>
+
+            {currentSessionLabel ? (
+              <View style={styles.sessionBanner}>
+                <Text style={styles.sessionBannerLabel}>Active Session</Text>
+                <Text style={styles.sessionBannerText}>
+                  {currentSessionLabel}
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.sessionHint}>
+                Choose a lesson or quiz session to begin. You can control the
+                app using gestures: swipe to navigate, double tap to repeat, and
+                long press for hints in quiz mode.
               </Text>
-            </Pressable>
+            )}
           </View>
 
-          {currentSessionLabel ? (
-            <View style={styles.sessionBanner}>
-              <Text style={styles.sessionBannerLabel}>Active Session</Text>
-              <Text style={styles.sessionBannerText}>{currentSessionLabel}</Text>
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={styles.scrollContent}
+          >
+            {/* Lesson Player Card */}
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Lesson Player</Text>
+              <Text style={styles.cardSubtitle}>
+                Structured ICT concepts, read aloud in short, focused segments.
+                In lesson mode: swipe right for next segment, swipe left for
+                previous, double tap to repeat.
+              </Text>
+
+              <View style={styles.buttonRow}>
+                <PrimaryButton
+                  label="Start Lesson"
+                  description="Play from current or resumed position"
+                  onPress={() => {
+                    setMode("lesson");
+                    setCurrentSessionLabel(
+                      "Lesson playback – core ICT O/L concepts"
+                    );
+                    lesson.start();
+                  }}
+                />
+              </View>
+
+              <View style={styles.buttonRow}>
+                <SecondaryButton label="Previous" onPress={() => lesson.prev()} />
+                <SecondaryButton label="Repeat" onPress={() => lesson.repeat()} />
+                <SecondaryButton label="Next" onPress={() => lesson.next()} />
+              </View>
+
+              <View style={styles.buttonRow}>
+                <DangerButton label="Stop" onPress={() => lesson.stop()} />
+              </View>
             </View>
-          ) : (
-            <Text style={styles.sessionHint}>
-              Choose a lesson or quiz session to begin. All content is spoken
-              aloud and designed for gesture-friendly use.
-            </Text>
-          )}
+
+            {/* Quiz Sessions Card */}
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Quiz Sessions</Text>
+              <Text style={styles.cardSubtitle}>
+                Audio-only questions with adaptive sessions for practice,
+                revision and mock exams. In quiz mode: swipe up, right, down,
+                left for answers A, B, C, D. Double tap to repeat, long press
+                for hints.
+              </Text>
+
+              <View style={styles.sessionGrid}>
+                <SessionCard
+                  label="Practice"
+                  badge="10 Qs · G10"
+                  description="Mixed difficulty warm-up session."
+                  onPress={handlePractice}
+                />
+                <SessionCard
+                  label="Topic Drill"
+                  badge="Health/Security"
+                  description="Focus on one ICT area."
+                  onPress={handleTopicDrill}
+                />
+                <SessionCard
+                  label="Quick Revision"
+                  badge="5 Qs"
+                  description="Short revision burst with easier items."
+                  onPress={handleQuickRevision}
+                />
+                <SessionCard
+                  label="Mock Exam"
+                  badge="40 Qs"
+                  description="Simulated exam-style session."
+                  onPress={handleMockExam}
+                />
+                <SessionCard
+                  label="Weak Area"
+                  badge="Mistakes"
+                  description="Revisit and correct past errors."
+                  onPress={handleWeakArea}
+                />
+              </View>
+            </View>
+
+            {/* Answer Controls Card */}
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Answer Controls</Text>
+              <Text style={styles.cardSubtitle}>
+                Use these while a question is being read. Each option also has a
+                gesture shortcut so the interface works even with the screen
+                off.
+              </Text>
+
+              <View style={styles.answerGrid}>
+                <AnswerButton label="A" onPress={() => quiz.answer(0)} />
+                <AnswerButton label="B" onPress={() => quiz.answer(1)} />
+                <AnswerButton label="C" onPress={() => quiz.answer(2)} />
+                <AnswerButton label="D" onPress={() => quiz.answer(3)} />
+              </View>
+
+              <View style={styles.buttonRow}>
+                <SecondaryButton
+                  label="Repeat Question"
+                  onPress={() => quiz.repeatQuestion()}
+                />
+                <SecondaryButton label="Hint" onPress={() => quiz.speakHint()} />
+                <DangerButton label="End Session" onPress={() => quiz.stop()} />
+              </View>
+            </View>
+          </ScrollView>
         </View>
-
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
-        >
-          {/* Lesson Player Card */}
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Lesson Player</Text>
-            <Text style={styles.cardSubtitle}>
-              Structured ICT concepts, read aloud in short, focused segments.
-            </Text>
-
-            <View style={styles.buttonRow}>
-              <PrimaryButton
-                label="Start Lesson"
-                description="Play from the beginning"
-                onPress={() => {
-                  setMode("lesson");
-                  setCurrentSessionLabel(
-                    "Lesson playback – core ICT O/L concepts"
-                  );
-                  lesson.start();
-                }}
-              />
-            </View>
-
-            <View style={styles.buttonRow}>
-              <SecondaryButton
-                label="Previous"
-                onPress={() => lesson.prev()}
-              />
-              <SecondaryButton
-                label="Repeat"
-                onPress={() => lesson.repeat()}
-              />
-              <SecondaryButton label="Next" onPress={() => lesson.next()} />
-            </View>
-
-            <View style={styles.buttonRow}>
-              <DangerButton label="Stop" onPress={() => lesson.stop()} />
-            </View>
-          </View>
-
-          {/* Quiz Sessions Card */}
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Quiz Sessions</Text>
-            <Text style={styles.cardSubtitle}>
-              Audio-only questions with adaptive sessions for practice, revision
-              and mock exams.
-            </Text>
-
-            <View style={styles.sessionGrid}>
-              <SessionCard
-                label="Practice"
-                badge="10 Qs · G10"
-                description="Mixed difficulty warm-up session."
-                onPress={handlePractice}
-              />
-              <SessionCard
-                label="Topic Drill"
-                badge="Health/Security"
-                description="Focus on one ICT area."
-                onPress={handleTopicDrill}
-              />
-              <SessionCard
-                label="Quick Revision"
-                badge="5 Qs"
-                description="Short revision burst with easier items."
-                onPress={handleQuickRevision}
-              />
-              <SessionCard
-                label="Mock Exam"
-                badge="40 Qs"
-                description="Simulated exam-style session."
-                onPress={handleMockExam}
-              />
-              <SessionCard
-                label="Weak Area"
-                badge="Mistakes"
-                description="Revisit and correct past errors."
-                onPress={handleWeakArea}
-              />
-            </View>
-          </View>
-
-          {/* Answer Controls Card */}
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Answer Controls</Text>
-            <Text style={styles.cardSubtitle}>
-              Use these while a question is being read. Each option can also be
-              mapped to gestures.
-            </Text>
-
-            <View style={styles.answerGrid}>
-              <AnswerButton label="A" onPress={() => quiz.answer(0)} />
-              <AnswerButton label="B" onPress={() => quiz.answer(1)} />
-              <AnswerButton label="C" onPress={() => quiz.answer(2)} />
-              <AnswerButton label="D" onPress={() => quiz.answer(3)} />
-            </View>
-
-            <View style={styles.buttonRow}>
-              <SecondaryButton
-                label="Repeat Question"
-                onPress={() => quiz.repeatQuestion()}
-              />
-              <SecondaryButton
-                label="Hint"
-                onPress={() => quiz.speakHint()}
-              />
-              <DangerButton
-                label="End Session"
-                onPress={() => quiz.stop()}
-              />
-            </View>
-          </View>
-        </ScrollView>
-      </View>
-    </SafeAreaView>
+      </SafeAreaView>
+    </GestureDetector>
   );
 }
 
