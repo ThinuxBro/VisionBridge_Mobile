@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -7,25 +7,166 @@ import {
   ScrollView,
   SafeAreaView,
 } from "react-native";
-import {
-  Gesture,
-  GestureDetector,
-  Directions,
-} from "react-native-gesture-handler";
 import { LessonPlayerController } from "./lesson_player/controller/lessonPlayerController";
-import { QuizController } from "./quiz_engine/controller/quizController";
+import {
+  QuizController,
+  ActiveQuestionView,
+  AnswerStatus,
+} from "./quiz_engine/controller/quizController";
+import type { LessonSummary } from "./data/lessonRepository";
 
 type Mode = "lesson" | "quiz";
 
 export default function KarunarathneLessonQuizScreen() {
   const lesson = useMemo(() => new LessonPlayerController(), []);
-  const quiz = useMemo(() => new QuizController(), []);
+
+  const [activeQuestion, setActiveQuestion] =
+    useState<ActiveQuestionView | null>(null);
+  const quiz = useMemo(
+    () => new QuizController(setActiveQuestion),
+    []
+  );
 
   const [mode, setMode] = useState<Mode>("lesson");
   const [currentSessionLabel, setCurrentSessionLabel] =
     useState<string | null>(null);
 
-  // --- QUIZ SESSION HANDLERS ---
+  /* ---------------- LESSON MODE STATE ---------------- */
+
+  const [grades, setGrades] = useState<number[]>([]);
+  const [selectedGrade, setSelectedGrade] = useState<number | null>(null);
+  const [lessonList, setLessonList] = useState<LessonSummary[]>([]);
+  const [selectedLessonId, setSelectedLessonId] = useState<string | null>(null);
+  const [lessonTitle, setLessonTitle] = useState("");
+  const [lessonObjective, setLessonObjective] = useState("");
+  const [segmentText, setSegmentText] = useState("");
+  const [quizReady, setQuizReady] = useState(false);
+
+  // For timer on the active quiz question
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  /* ------------ initial load of grades + first lesson ------------- */
+  useEffect(() => {
+    const g = lesson.getAvailableGrades();
+    if (!g.length) return;
+
+    setGrades(g);
+    const firstGrade = g[0];
+    setSelectedGrade(firstGrade);
+
+    const list = lesson.getLessonsForGrade(firstGrade);
+    setLessonList(list);
+
+    if (list.length) {
+      const first = list[0];
+      setSelectedLessonId(first.lessonId);
+      setLessonTitle(first.title);
+      setLessonObjective(first.objective);
+      lesson.selectLesson(first.lessonId);
+      setSegmentText(lesson.getCurrentSegmentText());
+      setQuizReady(false);
+    }
+  }, [lesson]);
+
+  // Helper: refresh visible text & whether quiz can start
+  const refreshSegmentState = () => {
+    const txt = lesson.getCurrentSegmentText();
+    setSegmentText(txt);
+    const total = lesson.getSegmentCount();
+    const idx = lesson.getCurrentSegmentIndex();
+    setQuizReady(total > 0 && idx >= total - 1);
+  };
+
+  /* ---------------- TIMER FOR ACTIVE QUESTION ---------------- */
+
+  useEffect(() => {
+    if (!activeQuestion?.startedAt || activeQuestion.done) {
+      setElapsedSeconds(0);
+      return;
+    }
+    const id = setInterval(() => {
+      setElapsedSeconds(
+        Math.max(
+          0,
+          Math.floor((Date.now() - (activeQuestion.startedAt || 0)) / 1000)
+        )
+      );
+    }, 1000);
+    return () => clearInterval(id);
+  }, [activeQuestion?.startedAt, activeQuestion?.done]);
+
+  /* ---------------- LESSON HANDLERS ---------------- */
+
+  const handleSelectGrade = (grade: number) => {
+    setSelectedGrade(grade);
+    const list = lesson.getLessonsForGrade(grade);
+    setLessonList(list);
+    const first = list[0];
+    if (first) {
+      setSelectedLessonId(first.lessonId);
+      setLessonTitle(first.title);
+      setLessonObjective(first.objective);
+      lesson.selectLesson(first.lessonId);
+      setSegmentText(lesson.getCurrentSegmentText());
+      setQuizReady(false);
+    }
+  };
+
+  const handleSelectLesson = (id: string) => {
+    setSelectedLessonId(id);
+    const meta = lessonList.find((l) => l.lessonId === id);
+    if (meta) {
+      setLessonTitle(meta.title);
+      setLessonObjective(meta.objective);
+    }
+    lesson.selectLesson(id);
+    setSegmentText(lesson.getCurrentSegmentText());
+    setQuizReady(false);
+  };
+
+  const handleLessonStart = () => {
+    setMode("lesson");
+    setCurrentSessionLabel(null);
+    lesson.start();
+    refreshSegmentState();
+  };
+
+  const handleLessonPrev = () => {
+    lesson.prev();
+    refreshSegmentState();
+  };
+
+  const handleLessonNext = () => {
+    lesson.next();
+    refreshSegmentState();
+  };
+
+  const handleLessonRepeat = () => {
+    lesson.repeat();
+    refreshSegmentState();
+  };
+
+  const handleLessonStop = () => {
+    lesson.stop();
+  };
+
+  const handleStartLessonQuiz = () => {
+    if (!selectedLessonId) return;
+    const meta = lesson.getCurrentLessonMeta();
+    if (!meta) return;
+
+    setMode("quiz");
+    const label = `Quiz for lesson: ${meta.title}`;
+    setCurrentSessionLabel(label);
+    quiz.startSession({
+      type: "topic_drill",
+      grade: meta.grade,
+      category: meta.category,
+      limit: 10,
+    });
+  };
+
+  /* ---------------- QUIZ SESSION HANDLERS ---------------- */
 
   const handlePractice = () => {
     setMode("quiz");
@@ -64,252 +205,360 @@ export default function KarunarathneLessonQuizScreen() {
     quiz.startSession({ type: "weak_area", limit: 10 });
   };
 
-  // --- GESTURES ---
+  const helperText =
+    mode === "lesson"
+      ? "Lesson mode: select Grade 10 or 11, pick a lesson, and the segments will be spoken while you can follow the enlarged text."
+      : "Quiz mode: run practice, revision or mock exams. You can later map gestures to answers A, B, C, D and hints.";
 
-  // Double tap: repeat current content
-  const doubleTap = Gesture.Tap()
-    .numberOfTaps(2)
-    .onEnd(() => {
-      if (mode === "lesson") {
-        lesson.repeat();
-      } else {
-        quiz.repeatQuestion();
-      }
-    });
-
-  // Long press: hint (quiz mode)
-  const longPress = Gesture.LongPress()
-    .minDuration(400)
-    .onEnd(() => {
-      if (mode === "quiz") {
-        quiz.speakHint();
-      }
-    });
-
-  // Swipe left/right: lesson navigation OR quiz answer D/B
-  const swipeLeft = Gesture.Fling()
-    .direction(Directions.LEFT)
-    .onEnd(() => {
-      if (mode === "lesson") {
-        lesson.prev();
-      } else {
-        // Quiz: answer D
-        quiz.answer(3);
-      }
-    });
-
-  const swipeRight = Gesture.Fling()
-    .direction(Directions.RIGHT)
-    .onEnd(() => {
-      if (mode === "lesson") {
-        lesson.next();
-      } else {
-        // Quiz: answer B
-        quiz.answer(1);
-      }
-    });
-
-  // Swipe up/down: quiz answers A/C
-  const swipeUp = Gesture.Fling()
-    .direction(Directions.UP)
-    .onEnd(() => {
-      if (mode === "quiz") {
-        // Quiz: answer A
-        quiz.answer(0);
-      }
-    });
-
-  const swipeDown = Gesture.Fling()
-    .direction(Directions.DOWN)
-    .onEnd(() => {
-      if (mode === "quiz") {
-        // Quiz: answer C
-        quiz.answer(2);
-      }
-    });
-
-  const gestures = Gesture.Simultaneous(
-    doubleTap,
-    longPress,
-    swipeLeft,
-    swipeRight,
-    swipeUp,
-    swipeDown
-  );
+  const selectedIndex = activeQuestion?.selectedIndex ?? -1;
+  const answerStatus: AnswerStatus =
+    activeQuestion?.answerStatus ?? "idle";
 
   return (
-    <GestureDetector gesture={gestures}>
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.root}>
-          {/* Header */}
-          <View style={styles.header}>
-            <Text style={styles.appTitle}>VisionBridge Mobile</Text>
-            <Text style={styles.appSubtitle}>
-              Lesson Player & Audio Quiz Engine
-            </Text>
+    <SafeAreaView style={styles.safe}>
+      <View style={styles.root}>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.appTitle}>VisionBridge Mobile</Text>
+          <Text style={styles.appSubtitle}>
+            Lesson Player & Audio Quiz Engine
+          </Text>
 
-            <View style={styles.modePill}>
-              <Pressable
+          <View style={styles.modePill}>
+            <Pressable
+              style={[
+                styles.modeChip,
+                mode === "lesson" && styles.modeChipActive,
+              ]}
+              onPress={() => setMode("lesson")}
+            >
+              <Text
                 style={[
-                  styles.modeChip,
-                  mode === "lesson" && styles.modeChipActive,
+                  styles.modeChipText,
+                  mode === "lesson" && styles.modeChipTextActive,
                 ]}
-                onPress={() => setMode("lesson")}
               >
-                <Text
-                  style={[
-                    styles.modeChipText,
-                    mode === "lesson" && styles.modeChipTextActive,
-                  ]}
-                >
-                  Lesson Mode
-                </Text>
-              </Pressable>
-              <Pressable
-                style={[
-                  styles.modeChip,
-                  mode === "quiz" && styles.modeChipActive,
-                ]}
-                onPress={() => setMode("quiz")}
-              >
-                <Text
-                  style={[
-                    styles.modeChipText,
-                    mode === "quiz" && styles.modeChipTextActive,
-                  ]}
-                >
-                  Quiz Mode
-                </Text>
-              </Pressable>
-            </View>
-
-            {currentSessionLabel ? (
-              <View style={styles.sessionBanner}>
-                <Text style={styles.sessionBannerLabel}>Active Session</Text>
-                <Text style={styles.sessionBannerText}>
-                  {currentSessionLabel}
-                </Text>
-              </View>
-            ) : (
-              <Text style={styles.sessionHint}>
-                Choose a lesson or quiz session to begin. You can control the
-                app using gestures: swipe to navigate, double tap to repeat, and
-                long press for hints in quiz mode.
+                Lesson Mode
               </Text>
-            )}
+            </Pressable>
+            <Pressable
+              style={[
+                styles.modeChip,
+                mode === "quiz" && styles.modeChipActive,
+              ]}
+              onPress={() => setMode("quiz")}
+            >
+              <Text
+                style={[
+                  styles.modeChipText,
+                  mode === "quiz" && styles.modeChipTextActive,
+                ]}
+              >
+                Quiz Mode
+              </Text>
+            </Pressable>
           </View>
 
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={styles.scrollContent}
-          >
-            {/* Lesson Player Card */}
+          {currentSessionLabel && mode === "quiz" ? (
+            <View style={styles.sessionBanner}>
+              <Text style={styles.sessionBannerLabel}>Active Session</Text>
+              <Text style={styles.sessionBannerText}>
+                {currentSessionLabel}
+              </Text>
+            </View>
+          ) : (
+            <Text style={styles.sessionHint}>{helperText}</Text>
+          )}
+        </View>
+
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+        >
+          {/* ------------------- LESSON MODE ------------------- */}
+          {mode === "lesson" && (
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Lesson Player</Text>
               <Text style={styles.cardSubtitle}>
-                Structured ICT concepts, read aloud in short, focused segments.
-                In lesson mode: swipe right for next segment, swipe left for
-                previous, double tap to repeat.
+                First choose Grade 10 or Grade 11, then select a lesson. The
+                lesson text will be shown in a large font and read aloud.
               </Text>
 
-              <View style={styles.buttonRow}>
-                <PrimaryButton
-                  label="Start Lesson"
-                  description="Play from current or resumed position"
-                  onPress={() => {
-                    setMode("lesson");
-                    setCurrentSessionLabel(
-                      "Lesson playback – core ICT O/L concepts"
-                    );
-                    lesson.start();
-                  }}
-                />
+              {/* Grade selector */}
+              <View style={styles.gradeRow}>
+                {grades.map((g) => (
+                  <Pressable
+                    key={g}
+                    style={[
+                      styles.gradeChip,
+                      selectedGrade === g && styles.gradeChipActive,
+                    ]}
+                    onPress={() => handleSelectGrade(g)}
+                  >
+                    <Text
+                      style={[
+                        styles.gradeChipText,
+                        selectedGrade === g && styles.gradeChipTextActive,
+                      ]}
+                    >
+                      {g === 10 ? "Grade 10 O/L ICT" : "Grade 11 O/L ICT"}
+                    </Text>
+                  </Pressable>
+                ))}
               </View>
 
-              <View style={styles.buttonRow}>
-                <SecondaryButton label="Previous" onPress={() => lesson.prev()} />
-                <SecondaryButton label="Repeat" onPress={() => lesson.repeat()} />
-                <SecondaryButton label="Next" onPress={() => lesson.next()} />
+              {/* Lesson list */}
+              <Text style={styles.sectionLabel}>Lessons</Text>
+              <View style={styles.lessonList}>
+                {lessonList.map((l) => {
+                  const sel = l.lessonId === selectedLessonId;
+                  return (
+                    <Pressable
+                      key={l.lessonId}
+                      style={[styles.lessonItem, sel && styles.lessonItemActive]}
+                      onPress={() => handleSelectLesson(l.lessonId)}
+                    >
+                      <Text
+                        style={[
+                          styles.lessonItemTitle,
+                          sel && styles.lessonItemTitleActive,
+                        ]}
+                      >
+                        {l.title}
+                      </Text>
+                      <Text style={styles.lessonItemMeta}>
+                        {l.category} · Grade {l.grade}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
               </View>
 
-              <View style={styles.buttonRow}>
-                <DangerButton label="Stop" onPress={() => lesson.stop()} />
+              {/* Current lesson text */}
+              <View style={styles.lessonBody}>
+                <Text style={styles.lessonBodyTitle}>{lessonTitle}</Text>
+                {lessonObjective ? (
+                  <Text style={styles.lessonBodyObjective}>
+                    {lessonObjective}
+                  </Text>
+                ) : null}
+                <View style={styles.lessonBodyTextBox}>
+                  <Text style={styles.lessonBodyText}>
+                    {segmentText ||
+                      "Tap “Start Lesson” to begin listening to this lesson."}
+                  </Text>
+                </View>
+
+                {/* Transport controls */}
+                <View style={styles.buttonRow}>
+                  <PrimaryButton
+                    label="Start Lesson"
+                    description="Play from current or resumed position"
+                    onPress={handleLessonStart}
+                  />
+                </View>
+
+                <View style={styles.buttonRow}>
+                  <SecondaryButton label="Previous" onPress={handleLessonPrev} />
+                  <SecondaryButton label="Repeat" onPress={handleLessonRepeat} />
+                  <SecondaryButton label="Next" onPress={handleLessonNext} />
+                </View>
+
+                <View style={styles.buttonRow}>
+                  <DangerButton label="Stop" onPress={handleLessonStop} />
+                </View>
+
+                {/* Quiz entry – only after end of lesson */}
+                {quizReady && (
+                  <View style={styles.quizEntry}>
+                    <Text style={styles.quizEntryLabel}>
+                      You have completed this lesson. Start the linked quiz to test your understanding of this topic.
+                    </Text>
+                    <PrimaryButton
+                      label="Start Quiz for this Lesson"
+                      description="10 audio questions mapped to this topic"
+                      onPress={handleStartLessonQuiz}
+                    />
+                  </View>
+                )}
               </View>
             </View>
+          )}
 
-            {/* Quiz Sessions Card */}
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Quiz Sessions</Text>
-              <Text style={styles.cardSubtitle}>
-                Audio-only questions with adaptive sessions for practice,
-                revision and mock exams. In quiz mode: swipe up, right, down,
-                left for answers A, B, C, D. Double tap to repeat, long press
-                for hints.
-              </Text>
+          {/* ------------------- QUIZ MODE ------------------- */}
+          {mode === "quiz" && (
+            <>
+              {/* Quiz Sessions Card */}
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Quiz Sessions</Text>
+                <Text style={styles.cardSubtitle}>
+                  Audio-only questions with adaptive sessions for practice,
+                  revision and mock exams.
+                </Text>
 
-              <View style={styles.sessionGrid}>
-                <SessionCard
-                  label="Practice"
-                  badge="10 Qs · G10"
-                  description="Mixed difficulty warm-up session."
-                  onPress={handlePractice}
-                />
-                <SessionCard
-                  label="Topic Drill"
-                  badge="Health/Security"
-                  description="Focus on one ICT area."
-                  onPress={handleTopicDrill}
-                />
-                <SessionCard
-                  label="Quick Revision"
-                  badge="5 Qs"
-                  description="Short revision burst with easier items."
-                  onPress={handleQuickRevision}
-                />
-                <SessionCard
-                  label="Mock Exam"
-                  badge="40 Qs"
-                  description="Simulated exam-style session."
-                  onPress={handleMockExam}
-                />
-                <SessionCard
-                  label="Weak Area"
-                  badge="Mistakes"
-                  description="Revisit and correct past errors."
-                  onPress={handleWeakArea}
-                />
-              </View>
-            </View>
-
-            {/* Answer Controls Card */}
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Answer Controls</Text>
-              <Text style={styles.cardSubtitle}>
-                Use these while a question is being read. Each option also has a
-                gesture shortcut so the interface works even with the screen
-                off.
-              </Text>
-
-              <View style={styles.answerGrid}>
-                <AnswerButton label="A" onPress={() => quiz.answer(0)} />
-                <AnswerButton label="B" onPress={() => quiz.answer(1)} />
-                <AnswerButton label="C" onPress={() => quiz.answer(2)} />
-                <AnswerButton label="D" onPress={() => quiz.answer(3)} />
+                <View style={styles.sessionGrid}>
+                  <SessionCard
+                    label="Practice"
+                    badge="10 Qs · G10"
+                    description="Mixed difficulty warm-up session."
+                    onPress={handlePractice}
+                  />
+                  <SessionCard
+                    label="Topic Drill"
+                    badge="Health/Security"
+                    description="Focus on one ICT area."
+                    onPress={handleTopicDrill}
+                  />
+                  <SessionCard
+                    label="Quick Revision"
+                    badge="5 Qs"
+                    description="Short revision burst with easier items."
+                    onPress={handleQuickRevision}
+                  />
+                  <SessionCard
+                    label="Mock Exam"
+                    badge="40 Qs"
+                    description="Simulated exam-style session."
+                    onPress={handleMockExam}
+                  />
+                  <SessionCard
+                    label="Weak Area"
+                    badge="Mistakes"
+                    description="Revisit and correct past errors."
+                    onPress={handleWeakArea}
+                  />
+                </View>
               </View>
 
-              <View style={styles.buttonRow}>
-                <SecondaryButton
-                  label="Repeat Question"
-                  onPress={() => quiz.repeatQuestion()}
-                />
-                <SecondaryButton label="Hint" onPress={() => quiz.speakHint()} />
-                <DangerButton label="End Session" onPress={() => quiz.stop()} />
+              {/* Active question / summary card */}
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>
+                  {activeQuestion?.done ? "Session Summary" : "Active Question"}
+                </Text>
+
+                {activeQuestion?.done ? (
+                  <>
+                    <Text style={styles.cardSubtitle}>
+                      You answered {activeQuestion.correctCount} out of{" "}
+                      {activeQuestion.totalCount} questions correctly.
+                    </Text>
+                    {typeof activeQuestion.correctCount === "number" &&
+                      typeof activeQuestion.totalCount === "number" &&
+                      activeQuestion.totalCount > 0 && (
+                        <Text style={styles.questionText}>
+                          Score:{" "}
+                          {Math.round(
+                            (activeQuestion.correctCount /
+                              activeQuestion.totalCount) *
+                            100
+                          )}
+                          %
+                        </Text>
+                      )}
+                    <Text style={styles.sessionHint}>
+                      You can start another session above or go back to lesson
+                      mode.
+                    </Text>
+                  </>
+                ) : activeQuestion?.question ? (
+                  <>
+                    <View style={styles.questionHeaderRow}>
+                      <Text style={styles.questionBadge}>
+                        Q {activeQuestion.index + 1} of {activeQuestion.total}
+                      </Text>
+                      <Text style={styles.questionMeta}>
+                        G{activeQuestion.question.grade} ·{" "}
+                        {activeQuestion.question.category}
+                      </Text>
+                    </View>
+
+                    <Text style={styles.questionText}>
+                      {activeQuestion.question.question}
+                    </Text>
+
+                    <View style={styles.questionOptions}>
+                      {activeQuestion.question.options.map((opt, i) => (
+                        <Text key={i} style={styles.questionOptionText}>
+                          {String.fromCharCode(65 + i)}. {opt}
+                        </Text>
+                      ))}
+                    </View>
+
+                    {activeQuestion.lastHint ? (
+                      <Text style={styles.questionHint}>
+                        Hint: {activeQuestion.lastHint}
+                      </Text>
+                    ) : null}
+
+                    {activeQuestion.startedAt && (
+                      <Text style={styles.questionTimer}>
+                        Time on question: {elapsedSeconds}s
+                      </Text>
+                    )}
+                  </>
+                ) : (
+                  <Text style={styles.sessionHint}>
+                    Start a session above to see questions here while they are
+                    read aloud.
+                  </Text>
+                )}
               </View>
-            </View>
-          </ScrollView>
-        </View>
-      </SafeAreaView>
-    </GestureDetector>
+
+              {/* Answer Controls Card */}
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Answer Controls</Text>
+                <Text style={styles.cardSubtitle}>
+                  Use these while a question is being read. Each option can also
+                  be mapped to gestures.
+                </Text>
+
+                <View style={styles.answerGrid}>
+                  <AnswerButton
+                    label="A"
+                    onPress={() => quiz.answer(0)}
+                    isSelected={selectedIndex === 0}
+                    status={answerStatus}
+                  />
+                  <AnswerButton
+                    label="B"
+                    onPress={() => quiz.answer(1)}
+                    isSelected={selectedIndex === 1}
+                    status={answerStatus}
+                  />
+                  <AnswerButton
+                    label="C"
+                    onPress={() => quiz.answer(2)}
+                    isSelected={selectedIndex === 2}
+                    status={answerStatus}
+                  />
+                  <AnswerButton
+                    label="D"
+                    onPress={() => quiz.answer(3)}
+                    isSelected={selectedIndex === 3}
+                    status={answerStatus}
+                  />
+                </View>
+
+                <View style={styles.buttonRow}>
+                  <SecondaryButton
+                    label="Repeat Question"
+                    onPress={() => quiz.repeatQuestion()}
+                  />
+                  <SecondaryButton
+                    label="Hint"
+                    onPress={() => quiz.speakHint()}
+                  />
+                  <DangerButton
+                    label="End Session"
+                    onPress={() => quiz.stop()}
+                  />
+                </View>
+              </View>
+            </>
+          )}
+        </ScrollView>
+      </View>
+    </SafeAreaView>
   );
 }
 
@@ -355,7 +604,12 @@ type SessionCardProps = {
   onPress: () => void;
 };
 
-function SessionCard({ label, badge, description, onPress }: SessionCardProps) {
+function SessionCard({
+  label,
+  badge,
+  description,
+  onPress,
+}: SessionCardProps) {
   return (
     <Pressable style={styles.sessionCard} onPress={onPress}>
       <View style={styles.sessionHeaderRow}>
@@ -370,11 +624,32 @@ function SessionCard({ label, badge, description, onPress }: SessionCardProps) {
 type AnswerButtonProps = {
   label: string;
   onPress: () => void;
+  isSelected: boolean;
+  status: AnswerStatus;
 };
 
-function AnswerButton({ label, onPress }: AnswerButtonProps) {
+function AnswerButton({
+  label,
+  onPress,
+  isSelected,
+  status,
+}: AnswerButtonProps) {
+  let backgroundColor = "#181b26";
+  let borderColor = "#2f3246";
+
+  if (isSelected && status === "correct") {
+    backgroundColor = "#1DB954"; // green
+    borderColor = "#1DB954";
+  } else if (isSelected && status === "wrong") {
+    backgroundColor = "#b3213b"; // red
+    borderColor = "#b3213b";
+  }
+
   return (
-    <Pressable style={styles.answerBtn} onPress={onPress}>
+    <Pressable
+      style={[styles.answerBtn, { backgroundColor, borderColor }]}
+      onPress={onPress}
+    >
       <Text style={styles.answerBtnText}>{label}</Text>
     </Pressable>
   );
@@ -480,12 +755,112 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginBottom: 12,
   },
+  // lesson mode
+  gradeRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
+  gradeChip: {
+    flex: 1,
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: "#181b26",
+    borderWidth: 1,
+    borderColor: "#2e3244",
+    alignItems: "center",
+  },
+  gradeChipActive: {
+    backgroundColor: "#375EFF",
+    borderColor: "#375EFF",
+  },
+  gradeChipText: {
+    color: "#b6b8c5",
+    fontSize: 13,
+    fontWeight: "500",
+    textAlign: "center",
+  },
+  gradeChipTextActive: {
+    color: "#ffffff",
+  },
+  sectionLabel: {
+    color: "#d6d7e4",
+    fontSize: 13,
+    fontWeight: "600",
+    marginBottom: 4,
+  },
+  lessonList: {
+    gap: 6,
+    marginBottom: 12,
+  },
+  lessonItem: {
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: "#151826",
+    borderWidth: 1,
+    borderColor: "#25283b",
+  },
+  lessonItemActive: {
+    borderColor: "#5b7cff",
+    backgroundColor: "#181c30",
+  },
+  lessonItemTitle: {
+    color: "#f5f5f7",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  lessonItemTitleActive: {
+    color: "#ffffff",
+  },
+  lessonItemMeta: {
+    color: "#9ea1b4",
+    fontSize: 11,
+    marginTop: 2,
+  },
+  lessonBody: {
+    marginTop: 10,
+  },
+  lessonBodyTitle: {
+    color: "#f5f5f7",
+    fontSize: 16,
+    fontWeight: "700",
+    marginBottom: 4,
+  },
+  lessonBodyObjective: {
+    color: "#a0a3b1",
+    fontSize: 13,
+    marginBottom: 8,
+  },
+  lessonBodyTextBox: {
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: "#080b14",
+    borderWidth: 1,
+    borderColor: "#272a3c",
+    marginBottom: 10,
+  },
+  lessonBodyText: {
+    color: "#f5f5f7",
+    fontSize: 16,
+    lineHeight: 24,
+  },
   buttonRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
     marginTop: 6,
   },
+  quizEntry: {
+    marginTop: 14,
+    gap: 6,
+  },
+  quizEntryLabel: {
+    color: "#c3c6ff",
+    fontSize: 13,
+  },
+  // shared buttons
   primaryBtn: {
     flex: 1,
     minHeight: 60,
@@ -532,6 +907,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
   },
+  // quiz mode
   sessionGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -586,5 +962,43 @@ const styles = StyleSheet.create({
     color: "#f5f5f7",
     fontSize: 20,
     fontWeight: "700",
+    textAlign: "center",
+  },
+  questionHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  questionBadge: {
+    color: "#c5c8ff",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  questionMeta: {
+    color: "#8d91aa",
+    fontSize: 12,
+  },
+  questionText: {
+    color: "#f5f5f7",
+    fontSize: 16,
+    marginBottom: 8,
+  },
+  questionOptions: {
+    gap: 4,
+    marginBottom: 6,
+  },
+  questionOptionText: {
+    color: "#d2d5e5",
+    fontSize: 14,
+  },
+  questionHint: {
+    color: "#ffd666",
+    fontSize: 13,
+    marginTop: 4,
+  },
+  questionTimer: {
+    color: "#8d93ff",
+    fontSize: 12,
+    marginTop: 4,
   },
 });

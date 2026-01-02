@@ -1,82 +1,95 @@
-import { LessonRepository } from "../../data/lessonRepository";
+import { LessonRepository, LessonSummary } from "../../data/lessonRepository";
 import { AudioTtsEngine } from "../engine/audioTtsEngine";
 import { LessonSequencer } from "../engine/lessonSequencer";
-import {
-  loadLessonCursor,
-  saveLessonCursor,
-  clearLessonCursor,
-} from "../engine/lessonProgressStore";
+import { LessonContentSegment } from "../../data/datasetLoader";
 
 export class LessonPlayerController {
   private repo = new LessonRepository();
   private tts = new AudioTtsEngine();
-  private sequencer: LessonSequencer;
-
-  private cursorLoaded = false;
-  private resumedFromSaved = false;
+  private sequencer: LessonSequencer | null = null;
+  private currentLesson: LessonSummary | null = null;
 
   constructor() {
-    const segments = this.repo.getSegments();
-    this.sequencer = new LessonSequencer(segments);
-    this.restoreCursor();
-  }
-
-  private async restoreCursor() {
-    const cursor = await loadLessonCursor();
-    if (cursor && typeof cursor.segmentIndex === "number") {
-      this.sequencer.goTo(cursor.segmentIndex);
-      if (cursor.segmentIndex > 0) {
-        this.resumedFromSaved = true;
-      }
+    // Load a default lesson so the UI has something ready on first open
+    const def = this.repo.getDefaultLesson();
+    if (def) {
+      this.loadLesson(def.lessonId);
     }
-    this.cursorLoaded = true;
   }
 
-  private persistCursor() {
-    if (!this.cursorLoaded) return;
-    const idx = this.sequencer.index();
-    saveLessonCursor({
-      segmentIndex: idx,
-      updatedAt: Date.now(),
-    }).catch(() => {});
+  // --------- metadata for UI ----------
+
+  getAvailableGrades(): number[] {
+    return this.repo.getGrades();
   }
 
-  async start() {
-    // If we resumed from a previous position, speak that first
-    if (this.resumedFromSaved) {
+  getLessonsForGrade(grade: number): LessonSummary[] {
+    return this.repo.getLessonSummariesForGrade(grade);
+  }
+
+  getCurrentLessonMeta(): LessonSummary | null {
+    return this.currentLesson;
+  }
+
+  // --------- lesson selection ----------
+
+  selectLesson(lessonId: string) {
+    this.loadLesson(lessonId);
+  }
+
+  private loadLesson(lessonId: string) {
+    // Find metadata for the selected lesson
+    const allForGrade10 = this.repo.getLessonSummariesForGrade(10);
+    const allForGrade11 = this.repo.getLessonSummariesForGrade(11);
+    const all = [...allForGrade10, ...allForGrade11];
+
+    this.currentLesson = all.find((l) => l.lessonId === lessonId) ?? null;
+
+    // Load segments and reset sequencer
+    const segments = this.repo.getSegmentsForLesson(lessonId);
+    this.sequencer = new LessonSequencer(segments);
+  }
+
+  private getCurrentSegment(): LessonContentSegment | null {
+    if (!this.sequencer) return null;
+    return this.sequencer.current();
+  }
+
+  // --------- playback controls ----------
+
+  start() {
+    const seg = this.getCurrentSegment();
+    if (!seg) return;
+    this.tts.speak(seg.text);
+  }
+
+  /**
+   * Move to next segment. If there is no next segment, we announce
+   * that the lesson has finished and guide the learner to the quiz.
+   */
+  next() {
+    if (!this.sequencer) return;
+    const seg = this.sequencer.next();
+
+    if (!seg) {
       this.tts.speak(
-        "Resuming from your last position in the lesson. Swipe right to continue, or double tap to hear this segment again."
+        "You have reached the end of this lesson. You can now start the quiz for this topic using the Start Quiz for this lesson button."
       );
-      this.resumedFromSaved = false;
-      // small delay then speak actual segment
-      setTimeout(() => {
-        const seg = this.sequencer.current();
-        if (seg) this.tts.speak(seg.text);
-      }, 800);
       return;
     }
 
-    const seg = this.sequencer.current();
-    if (!seg) return;
     this.tts.speak(seg.text);
-  }
-
-  next() {
-    const seg = this.sequencer.next();
-    if (!seg) return;
-    this.tts.speak(seg.text);
-    this.persistCursor();
   }
 
   prev() {
+    if (!this.sequencer) return;
     const seg = this.sequencer.prev();
     if (!seg) return;
     this.tts.speak(seg.text);
-    this.persistCursor();
   }
 
   repeat() {
-    const seg = this.sequencer.current();
+    const seg = this.getCurrentSegment();
     if (!seg) return;
     this.tts.speak(seg.text);
   }
@@ -85,14 +98,20 @@ export class LessonPlayerController {
     this.tts.stop();
   }
 
-  async reset() {
-    this.sequencer.goTo(0);
-    await clearLessonCursor();
-    this.persistCursor();
-    this.tts.speak("Lesson restarted from the beginning.");
+  // --------- helpers for UI ----------
+
+  getCurrentSegmentText(): string {
+    const seg = this.getCurrentSegment();
+    return seg?.text ?? "";
   }
 
-  getIndex() {
+  getCurrentSegmentIndex(): number {
+    if (!this.sequencer) return 0;
     return this.sequencer.index();
+  }
+
+  getSegmentCount(): number {
+    if (!this.sequencer) return 0;
+    return this.sequencer.total();
   }
 }
