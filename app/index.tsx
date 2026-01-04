@@ -1,13 +1,12 @@
 // app/index.tsx
 import { useEffect, useRef, useState, useCallback } from "react";
-import { View, Text, Button, StyleSheet, Image } from "react-native";
+import { View, Text, StyleSheet } from "react-native";
 import { useRouter, Href } from "expo-router";
 import { Directions, Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import { SpeakableProvider, SpeakableText, useReadScreen } from "./components/SpeakableProvider";
 import { Video, ResizeMode } from "expo-av";
-
 
 function HomeContent({ go }: { go: (path: Href) => void }) {
   const { readScreen, stop } = useReadScreen();
