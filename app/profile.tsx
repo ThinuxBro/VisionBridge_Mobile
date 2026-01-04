@@ -6,7 +6,7 @@ import { router, Stack } from "expo-router";
 
 export default function ProfileScreen() {
   const TITLE = "Profile";
-  //useAnnounceOnFocus(TITLE);
+  // useAnnounceOnFocus(TITLE);
 
   return (
     <>
